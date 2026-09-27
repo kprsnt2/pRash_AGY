@@ -43,6 +43,7 @@ export function MessageItem({ message, onOpenWorksheetPrint, onPreviewAttachment
   };
 
   const isWorksheet =
+    message.agentId === 'printnova' ||
     message.agentId === 'worksheet' ||
     message.content.includes('[School / Home Study Worksheet]') ||
     message.content.includes('Student Name:') ||

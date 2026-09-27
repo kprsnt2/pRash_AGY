@@ -8,7 +8,14 @@ import {
   HeartPulse,
   Compass,
   Sparkles,
-  Bot,
+  Utensils,
+  Scale,
+  Mail,
+  Wallet,
+  Code2,
+  Plane,
+  Dumbbell,
+  ShieldCheck,
   LucideProps,
 } from 'lucide-react';
 
@@ -32,6 +39,22 @@ export function AgentIcon({ name, ...props }: AgentIconProps) {
       return <HeartPulse {...props} />;
     case 'Compass':
       return <Compass {...props} />;
+    case 'Utensils':
+      return <Utensils {...props} />;
+    case 'Scale':
+      return <Scale {...props} />;
+    case 'Mail':
+      return <Mail {...props} />;
+    case 'Wallet':
+      return <Wallet {...props} />;
+    case 'Code2':
+      return <Code2 {...props} />;
+    case 'Plane':
+      return <Plane {...props} />;
+    case 'Dumbbell':
+      return <Dumbbell {...props} />;
+    case 'ShieldCheck':
+      return <ShieldCheck {...props} />;
     case 'Sparkles':
     default:
       return <Sparkles {...props} />;
