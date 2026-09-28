@@ -1,4 +1,4 @@
-# pRash Hub — All-in-One Multi-Agent AI Platforms
+# pRash Hub — All-in-One Multi-Agent AI Platform
 
 A personal, production-ready AI chat workspace equipped with specialized agent plugins, zero-downtime model failover cascading, multi-attachment vision & document reasoning, and private zero-training routing.
 
