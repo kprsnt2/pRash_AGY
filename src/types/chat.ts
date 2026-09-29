@@ -40,6 +40,8 @@ export interface Message {
   failoverChain?: FailoverAttempt[];
   attachments?: Attachment[];
   timestamp: number;
+  latencyMs?: number;
+  tokenCount?: number;
   isError?: boolean;
   metadata?: MessageMetadata;
 }
@@ -81,5 +83,6 @@ export interface UserApiKeys {
   groqApiKey?: string;
   groqModel?: string;
   forcedProvider?: 'auto' | ProviderType;
+  selectedModel?: string; // specific selected model override
   privacyMode?: boolean;
 }

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Attachment, FailoverAttempt, Message, ProviderType } from '@/types/chat';
-import { PROVIDERS, getProviderCascade } from '@/lib/models';
+import {
+  PROVIDERS,
+  getDefaultModelForProvider,
+  getProviderCascade,
+  getProviderForModel,
+  shouldBypassToDefaultModel,
+  ensureChatCompletionsEndpoint,
+} from '@/lib/models';
 
 interface RequestBody {
   messages: Message[];
@@ -8,6 +15,7 @@ interface RequestBody {
   attachments?: Attachment[];
   privacyMode?: boolean;
   forcedProvider?: 'auto' | ProviderType;
+  selectedModel?: string;
   customKeys?: {
     openaiApiKey?: string;
     openaiModel?: string;
@@ -24,6 +32,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60 seconds timeout on Vercel
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+
   try {
     const body: RequestBody = await req.json();
     const {
@@ -32,11 +42,30 @@ export async function POST(req: NextRequest) {
       attachments = [],
       privacyMode = false,
       forcedProvider = 'auto',
+      selectedModel,
       customKeys = {},
     } = body;
 
-    // Determine cascade sequence
-    const cascade = getProviderCascade(privacyMode, forcedProvider);
+    const bypassToDefault = shouldBypassToDefaultModel();
+
+    // Determine cascade sequence & models
+    let cascade: ProviderType[];
+    let targetModelForProvider: Partial<Record<ProviderType, string>> = {};
+
+    if (privacyMode) {
+      cascade = ['gemini'];
+      targetModelForProvider.gemini =
+        !bypassToDefault && selectedModel && getProviderForModel(selectedModel) === 'gemini'
+          ? selectedModel
+          : customKeys.geminiModel || getDefaultModelForProvider('gemini');
+    } else if (!bypassToDefault && selectedModel) {
+      const preferredProvider = getProviderForModel(selectedModel);
+      cascade = getProviderCascade(false, preferredProvider);
+      targetModelForProvider[preferredProvider] = selectedModel;
+    } else {
+      cascade = getProviderCascade(false, forcedProvider);
+    }
+
     const failoverChain: FailoverAttempt[] = [];
 
     // Attempt cascade
@@ -49,8 +78,11 @@ export async function POST(req: NextRequest) {
 
       try {
         if (provider === 'openai') {
-          const apiKey = customKeys.openaiApiKey || process.env.OPENAI_API_KEY;
-          const model = customKeys.openaiModel || process.env.OPENAI_MODEL_DEFAULT || PROVIDERS.openai.defaultModel;
+          const apiKey = (customKeys.openaiApiKey || process.env.OPENAI_API_KEY)?.trim();
+          const model =
+            (bypassToDefault ? null : targetModelForProvider.openai) ||
+            customKeys.openaiModel ||
+            getDefaultModelForProvider('openai');
           attempt.model = model;
 
           if (!apiKey) {
@@ -60,17 +92,24 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          const endpoint = ensureChatCompletionsEndpoint(
+            process.env.OPENAI_BASE_URL,
+            PROVIDERS.openai.endpoint
+          );
+
           const stream = await callOpenAICompatible({
             apiKey,
             model,
-            endpoint: process.env.OPENAI_BASE_URL || PROVIDERS.openai.endpoint,
+            endpoint,
             systemPrompt: agentSystemPrompt,
             messages,
             attachments,
             providerName: 'OpenAI',
+            supportsVision: true,
           });
 
           attempt.status = 'success';
+          attempt.latencyMs = Date.now() - startTime;
           failoverChain.push(attempt);
 
           return createStreamResponse(stream, {
@@ -78,17 +117,21 @@ export async function POST(req: NextRequest) {
             model,
             failoverChain,
             privacyMode,
+            latencyMs: Date.now() - startTime,
           });
         }
 
         if (provider === 'gemini') {
-          const apiKey = customKeys.geminiApiKey || process.env.GEMINI_API_KEY;
-          const model = customKeys.geminiModel || process.env.GEMINI_MODEL_DEFAULT || PROVIDERS.gemini.defaultModel;
+          const apiKey = (customKeys.geminiApiKey || process.env.GEMINI_API_KEY)?.trim();
+          const model =
+            (bypassToDefault ? null : targetModelForProvider.gemini) ||
+            customKeys.geminiModel ||
+            getDefaultModelForProvider('gemini');
           attempt.model = model;
 
           if (!apiKey) {
             attempt.status = 'failed';
-            attempt.error = 'No Gemini API Key configured';
+            attempt.error = 'No Google Gemini API Key configured';
             failoverChain.push(attempt);
             continue;
           }
@@ -102,6 +145,7 @@ export async function POST(req: NextRequest) {
           });
 
           attempt.status = 'success';
+          attempt.latencyMs = Date.now() - startTime;
           failoverChain.push(attempt);
 
           return createStreamResponse(stream, {
@@ -109,32 +153,45 @@ export async function POST(req: NextRequest) {
             model,
             failoverChain,
             privacyMode,
+            latencyMs: Date.now() - startTime,
           });
         }
 
         if (provider === 'nvidia') {
-          const apiKey = customKeys.nvidiaApiKey || process.env.NVIDIA_API_KEY;
-          const model = customKeys.nvidiaModel || process.env.NVIDIA_MODEL_DEFAULT || PROVIDERS.nvidia.defaultModel;
+          const apiKey = (customKeys.nvidiaApiKey || process.env.NVIDIA_API_KEY)?.trim();
+          const model =
+            (bypassToDefault ? null : targetModelForProvider.nvidia) ||
+            customKeys.nvidiaModel ||
+            getDefaultModelForProvider('nvidia');
           attempt.model = model;
 
           if (!apiKey) {
             attempt.status = 'failed';
-            attempt.error = 'No NVIDIA API Key configured';
+            attempt.error = 'No NVIDIA NIM API Key configured';
             failoverChain.push(attempt);
             continue;
           }
 
+          const endpoint = ensureChatCompletionsEndpoint(
+            process.env.NVIDIA_BASE_URL,
+            PROVIDERS.nvidia.endpoint
+          );
+
+          const supportsVision = model.includes('vision');
+
           const stream = await callOpenAICompatible({
             apiKey,
             model,
-            endpoint: process.env.NVIDIA_BASE_URL || PROVIDERS.nvidia.endpoint,
+            endpoint,
             systemPrompt: agentSystemPrompt,
             messages,
             attachments,
-            providerName: 'NVIDIA',
+            providerName: 'NVIDIA NIM',
+            supportsVision,
           });
 
           attempt.status = 'success';
+          attempt.latencyMs = Date.now() - startTime;
           failoverChain.push(attempt);
 
           return createStreamResponse(stream, {
@@ -142,12 +199,16 @@ export async function POST(req: NextRequest) {
             model,
             failoverChain,
             privacyMode,
+            latencyMs: Date.now() - startTime,
           });
         }
 
         if (provider === 'groq') {
-          const apiKey = customKeys.groqApiKey || process.env.GROQ_API_KEY;
-          const model = customKeys.groqModel || process.env.GROQ_MODEL_DEFAULT || PROVIDERS.groq.defaultModel;
+          const apiKey = (customKeys.groqApiKey || process.env.GROQ_API_KEY)?.trim();
+          const model =
+            (bypassToDefault ? null : targetModelForProvider.groq) ||
+            customKeys.groqModel ||
+            getDefaultModelForProvider('groq');
           attempt.model = model;
 
           if (!apiKey) {
@@ -157,17 +218,26 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          const endpoint = ensureChatCompletionsEndpoint(
+            process.env.GROQ_BASE_URL,
+            PROVIDERS.groq.endpoint
+          );
+
+          const supportsVision = model.includes('scout') || model.includes('vision');
+
           const stream = await callOpenAICompatible({
             apiKey,
             model,
-            endpoint: process.env.GROQ_BASE_URL || PROVIDERS.groq.endpoint,
+            endpoint,
             systemPrompt: agentSystemPrompt,
             messages,
             attachments,
-            providerName: 'Groq',
+            providerName: 'Groq Cloud',
+            supportsVision,
           });
 
           attempt.status = 'success';
+          attempt.latencyMs = Date.now() - startTime;
           failoverChain.push(attempt);
 
           return createStreamResponse(stream, {
@@ -175,6 +245,7 @@ export async function POST(req: NextRequest) {
             model,
             failoverChain,
             privacyMode,
+            latencyMs: Date.now() - startTime,
           });
         }
       } catch (err: unknown) {
@@ -188,9 +259,10 @@ export async function POST(req: NextRequest) {
     }
 
     // If all providers in cascade failed
+    const reasons = failoverChain.map((f) => `${f.provider}: ${f.error || 'Failed'}`).join('; ');
     return NextResponse.json(
       {
-        error: 'All configured model providers failed or are missing API keys.',
+        error: `All configured model providers failed: ${reasons}`,
         failoverChain,
       },
       { status: 502 }
@@ -202,7 +274,7 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * Call OpenAI, NVIDIA, or Groq (all OpenAI-compatible chat completion APIs)
+ * Call OpenAI, NVIDIA, or Groq (OpenAI-compatible chat completion APIs)
  */
 async function callOpenAICompatible({
   apiKey,
@@ -212,6 +284,7 @@ async function callOpenAICompatible({
   messages,
   attachments,
   providerName,
+  supportsVision = true,
 }: {
   apiKey: string;
   model: string;
@@ -220,8 +293,8 @@ async function callOpenAICompatible({
   messages: Message[];
   attachments: Attachment[];
   providerName: string;
+  supportsVision?: boolean;
 }): Promise<ReadableStream<Uint8Array>> {
-  // Build OpenAI formatted messages
   const formattedMessages: any[] = [];
 
   if (systemPrompt) {
@@ -231,7 +304,6 @@ async function callOpenAICompatible({
     });
   }
 
-  // Add conversation history
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const isLastUserMessage = i === messages.length - 1 && msg.role === 'user';
@@ -239,16 +311,16 @@ async function callOpenAICompatible({
     if (msg.role === 'user') {
       const parts: any[] = [];
 
-      // Include text content
       if (msg.content) {
         parts.push({ type: 'text', text: msg.content });
       }
 
-      // If this is the last user message, attach current attachments
-      const msgAttachments = isLastUserMessage ? [...(msg.attachments || []), ...attachments] : msg.attachments || [];
+      const msgAttachments = isLastUserMessage
+        ? [...(msg.attachments || []), ...attachments]
+        : msg.attachments || [];
 
       for (const att of msgAttachments) {
-        if (att.type === 'image') {
+        if (att.type === 'image' && supportsVision && att.data) {
           parts.push({
             type: 'image_url',
             image_url: {
@@ -256,10 +328,20 @@ async function callOpenAICompatible({
               detail: 'high',
             },
           });
+        } else if (att.type === 'image') {
+          parts.push({
+            type: 'text',
+            text: `\n[Attached Image: ${att.name}]\n`,
+          });
         } else if (att.extractedText) {
           parts.push({
             type: 'text',
             text: `\n[Attached File: ${att.name}]\n\`\`\`\n${att.extractedText}\n\`\`\`\n`,
+          });
+        } else if (att.type === 'pdf') {
+          parts.push({
+            type: 'text',
+            text: `\n[Attached PDF Document: ${att.name}]\n`,
           });
         }
       }
@@ -294,7 +376,7 @@ async function callOpenAICompatible({
     let errDetail = `${response.status} ${response.statusText}`;
     try {
       const errJson = await response.json();
-      errDetail = errJson.error?.message || JSON.stringify(errJson);
+      errDetail = errJson.error?.message || errJson.message || JSON.stringify(errJson);
     } catch {}
     throw new Error(`${providerName} Error (${response.status}): ${errDetail}`);
   }
@@ -303,12 +385,43 @@ async function callOpenAICompatible({
     throw new Error(`${providerName} returned empty response body`);
   }
 
-  // Parse SSE chunks and extract content delta
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-
   let buffer = '';
+
+  const processLine = (line: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === 'data: [DONE]') return;
+
+    let jsonStr = trimmed;
+    if (trimmed.startsWith('data: ')) {
+      jsonStr = trimmed.slice(6).trim();
+    }
+
+    if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // Ignore partial parse
+        return;
+      }
+
+      if (parsed.error) {
+        const errMsg = parsed.error.message || JSON.stringify(parsed.error);
+        throw new Error(errMsg);
+      }
+
+      const delta =
+        parsed.choices?.[0]?.delta?.content ??
+        parsed.choices?.[0]?.delta?.reasoning_content ??
+        parsed.choices?.[0]?.text;
+      if (delta) {
+        controller.enqueue(encoder.encode(delta));
+      }
+    }
+  };
 
   return new ReadableStream({
     async start(controller) {
@@ -322,20 +435,11 @@ async function callOpenAICompatible({
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed === 'data: [DONE]') continue;
-            if (trimmed.startsWith('data: ')) {
-              try {
-                const parsed = JSON.parse(trimmed.slice(6));
-                const delta = parsed.choices?.[0]?.delta?.content;
-                if (delta) {
-                  controller.enqueue(encoder.encode(delta));
-                }
-              } catch {
-                // Ignore parse errors from malformed SSE chunks
-              }
-            }
+            processLine(line, controller);
           }
+        }
+        if (buffer.trim()) {
+          processLine(buffer, controller);
         }
         controller.close();
       } catch (err) {
@@ -346,7 +450,7 @@ async function callOpenAICompatible({
 }
 
 /**
- * Call Google Gemini via direct REST API with Multimodal Vision & Streaming
+ * Call Google Gemini via direct REST API with Multimodal Vision, PDF & Streaming
  */
 async function callGemini({
   apiKey,
@@ -361,16 +465,18 @@ async function callGemini({
   messages: Message[];
   attachments: Attachment[];
 }): Promise<ReadableStream<Uint8Array>> {
-  // Normalize model name (e.g. gemini-flash-latest -> gemini-1.5-flash if needed)
-  const effectiveModel = model === 'gemini-flash-latest' ? 'gemini-1.5-flash' : model;
-  const endpoint = `${PROVIDERS.gemini.endpoint}/models/${effectiveModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  // Normalize model name for standard Google AI Studio endpoint
+  const effectiveModel =
+    model === 'gemini-flash-latest' ? 'gemini-1.5-flash' : model;
+  const baseUrl = (process.env.GEMINI_BASE_URL || PROVIDERS.gemini.endpoint).replace(/\/+$/, '');
+  const endpoint = `${baseUrl}/models/${encodeURIComponent(effectiveModel)}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-  const contents: any[] = [];
+  const rawContents: { role: 'user' | 'model'; parts: any[] }[] = [];
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const isLastUserMessage = i === messages.length - 1 && msg.role === 'user';
-    const role = msg.role === 'assistant' ? 'model' : 'user';
+    const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
 
     const parts: any[] = [];
 
@@ -378,15 +484,25 @@ async function callGemini({
       parts.push({ text: msg.content });
     }
 
-    const msgAttachments = isLastUserMessage ? [...(msg.attachments || []), ...attachments] : msg.attachments || [];
+    const msgAttachments = isLastUserMessage
+      ? [...(msg.attachments || []), ...attachments]
+      : msg.attachments || [];
 
     for (const att of msgAttachments) {
-      if (att.type === 'image') {
-        // Strip data:image/...;base64,
+      if (att.type === 'image' && att.data) {
         const base64Data = att.data.replace(/^data:[^;]+;base64,/, '');
         parts.push({
           inlineData: {
-            mimeType: att.mimeType,
+            mimeType: att.mimeType || 'image/jpeg',
+            data: base64Data,
+          },
+        });
+      } else if (att.type === 'pdf' && att.data) {
+        // Native Gemini PDF support via inlineData!
+        const base64Data = att.data.replace(/^data:[^;]+;base64,/, '');
+        parts.push({
+          inlineData: {
+            mimeType: 'application/pdf',
             data: base64Data,
           },
         });
@@ -398,8 +514,23 @@ async function callGemini({
     }
 
     if (parts.length > 0) {
-      contents.push({ role, parts });
+      rawContents.push({ role, parts });
     }
+  }
+
+  // Gemini requires strict alternating turns (user -> model -> user) and first turn must be user.
+  // Merge consecutive turns with the same role to prevent 400 Bad Request error.
+  const contents: { role: 'user' | 'model'; parts: any[] }[] = [];
+  for (const item of rawContents) {
+    if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
+      contents[contents.length - 1].parts.push(...item.parts);
+    } else {
+      contents.push({ role: item.role, parts: [...item.parts] });
+    }
+  }
+
+  if (contents.length > 0 && contents[0].role !== 'user') {
+    contents.unshift({ role: 'user', parts: [{ text: 'Hello' }] });
   }
 
   const payload: any = {
@@ -419,6 +550,7 @@ async function callGemini({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
     },
     body: JSON.stringify(payload),
   });
@@ -429,17 +561,48 @@ async function callGemini({
       const errJson = await response.json();
       errDetail = errJson.error?.message || JSON.stringify(errJson);
     } catch {}
-    throw new Error(`Gemini Error (${response.status}): ${errDetail}`);
+    throw new Error(`Google Gemini Error (${response.status}): ${errDetail}`);
   }
 
   if (!response.body) {
-    throw new Error('Gemini returned empty response body');
+    throw new Error('Google Gemini returned empty response body');
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = '';
+
+  const processGeminiLine = (line: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === 'data: [DONE]') return;
+
+    let jsonStr = trimmed;
+    if (trimmed.startsWith('data: ')) {
+      jsonStr = trimmed.slice(6).trim();
+    }
+
+    if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // Ignore partial parse
+        return;
+      }
+
+      if (parsed.error) {
+        const errMsg = parsed.error.message || JSON.stringify(parsed.error);
+        throw new Error(errMsg);
+      }
+
+      const candidates = parsed.candidates || [];
+      const textPart = candidates[0]?.content?.parts?.[0]?.text;
+      if (textPart) {
+        controller.enqueue(encoder.encode(textPart));
+      }
+    }
+  };
 
   return new ReadableStream({
     async start(controller) {
@@ -453,21 +616,11 @@ async function callGemini({
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed === 'data: [DONE]') continue;
-            if (trimmed.startsWith('data: ')) {
-              try {
-                const parsed = JSON.parse(trimmed.slice(6));
-                const candidates = parsed.candidates || [];
-                const textPart = candidates[0]?.content?.parts?.[0]?.text;
-                if (textPart) {
-                  controller.enqueue(encoder.encode(textPart));
-                }
-              } catch {
-                // Ignore parse errors from partial JSON chunks
-              }
-            }
+            processGeminiLine(line, controller);
           }
+        }
+        if (buffer.trim()) {
+          processGeminiLine(buffer, controller);
         }
         controller.close();
       } catch (err) {
@@ -484,6 +637,7 @@ function createStreamResponse(
     model: string;
     failoverChain: FailoverAttempt[];
     privacyMode: boolean;
+    latencyMs: number;
   }
 ) {
   const headers = new Headers();
@@ -493,6 +647,7 @@ function createStreamResponse(
   headers.set('X-Prash-Model', meta.model);
   headers.set('X-Prash-Failover-Chain', encodeURIComponent(JSON.stringify(meta.failoverChain)));
   headers.set('X-Prash-Privacy-Mode', meta.privacyMode ? 'true' : 'false');
+  headers.set('X-Prash-Latency-Ms', String(meta.latencyMs));
 
   return new NextResponse(stream, { headers });
 }

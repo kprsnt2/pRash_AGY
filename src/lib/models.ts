@@ -1,25 +1,110 @@
 import { ProviderType } from '@/types/chat';
 
+export interface ModelOption {
+  id: string;
+  name: string;
+  provider: ProviderType;
+  description: string;
+  vision: boolean;
+  isDefault?: boolean;
+}
+
 export interface ProviderMeta {
   id: ProviderType;
   name: string;
   defaultModel: string;
-  availableModels: { id: string; name: string; description: string; vision: boolean }[];
+  availableModels: ModelOption[];
   endpoint: string;
   privacyTier: 'zero-training' | 'standard';
   badgeColor: string;
 }
 
+/** Canonical defaults as listed in specification */
+export const CANONICAL_DEFAULTS: Record<ProviderType, string> = {
+  openai: 'gpt-5.4-mini',
+  gemini: 'gemini-flash-latest',
+  nvidia: 'meta/llama-3.2-90b-vision-instruct',
+  groq: 'meta-llama/llama-4-scout-17b-16e-instruct',
+};
+
+/**
+ * Check if environment mandates bypassing user-selected models
+ * and forcing the server configured default model for all calls.
+ */
+export function shouldBypassToDefaultModel(): boolean {
+  if (typeof process !== 'undefined' && process.env) {
+    const val =
+      process.env.BYPASS_TO_DEFAULT_MODEL ||
+      process.env.FORCE_DEFAULT_MODEL ||
+      process.env.BYPASS_MODEL_SELECTION;
+    return val === 'true' || val === '1';
+  }
+  return false;
+}
+
+/** Get default model respecting environment variable overrides */
+export function getDefaultModelForProvider(provider: ProviderType): string {
+  if (typeof process !== 'undefined' && process.env) {
+    if (provider === 'openai') {
+      const val =
+        process.env.OPENAI_MODEL ||
+        process.env.OPENAI_MODEL_DEFAULT ||
+        process.env.OPENAI_DEFAULT_MODEL;
+      if (val?.trim()) return val.trim();
+    }
+    if (provider === 'gemini') {
+      const val =
+        process.env.GEMINI_MODEL ||
+        process.env.GOOGLE_MODEL ||
+        process.env.GEMINI_MODEL_DEFAULT ||
+        process.env.GEMINI_DEFAULT_MODEL;
+      if (val?.trim()) return val.trim();
+    }
+    if (provider === 'nvidia') {
+      const val =
+        process.env.NVIDIA_MODEL ||
+        process.env.NVIDIA_MODEL_DEFAULT ||
+        process.env.NVIDIA_DEFAULT_MODEL;
+      if (val?.trim()) return val.trim();
+    }
+    if (provider === 'groq') {
+      const val =
+        process.env.GROQ_MODEL ||
+        process.env.GROQ_MODEL_DEFAULT ||
+        process.env.GROQ_DEFAULT_MODEL;
+      if (val?.trim()) return val.trim();
+    }
+  }
+  return CANONICAL_DEFAULTS[provider];
+}
+
+/**
+ * Normalizes OpenAI-compatible base URLs to ensure /chat/completions is appended.
+ * Prevents 404/405 errors when users configure e.g. https://api.openai.com/v1 in .env
+ */
+export function ensureChatCompletionsEndpoint(
+  baseUrl?: string,
+  defaultEndpoint: string = 'https://api.openai.com/v1/chat/completions'
+): string {
+  if (!baseUrl?.trim()) return defaultEndpoint;
+  let clean = baseUrl.trim().replace(/\/+$/, '');
+  if (!clean.endsWith('/chat/completions')) {
+    clean += '/chat/completions';
+  }
+  return clean;
+}
+
+/**
+ * Canonical listed models only — updated to 2026 specifications
+ */
 export const PROVIDERS: Record<ProviderType, ProviderMeta> = {
   openai: {
     id: 'openai',
     name: 'OpenAI',
-    defaultModel: 'gpt-5.4-mini',
+    defaultModel: CANONICAL_DEFAULTS.openai,
     availableModels: [
-      { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', description: 'Fast, high-intelligence default model', vision: true },
-      { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', description: 'Ultra-lightweight and rapid response', vision: true },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Widely deployed fast multimodal model', vision: true },
-      { id: 'gpt-4o', name: 'GPT-4o Flagship', description: 'High-tier multimodal reasoning', vision: true },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', description: 'Fast, high-intelligence default model', vision: true, isDefault: true },
+      { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', provider: 'openai', description: 'Ultra-lightweight and rapid response', vision: true },
     ],
     endpoint: 'https://api.openai.com/v1/chat/completions',
     privacyTier: 'standard',
@@ -28,12 +113,10 @@ export const PROVIDERS: Record<ProviderType, ProviderMeta> = {
   gemini: {
     id: 'gemini',
     name: 'Google Gemini',
-    defaultModel: 'gemini-1.5-flash',
+    defaultModel: CANONICAL_DEFAULTS.gemini,
     availableModels: [
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast multimodal with 1M token context', vision: true },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen multimodal speed & power', vision: true },
-      { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', description: 'Auto-updating fast flagship', vision: true },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Deep reasoning with massive context', vision: true },
+      { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', provider: 'gemini', description: 'Fast multimodal zero-training flagship', vision: true, isDefault: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', description: 'Next-gen multimodal speed & power', vision: true },
     ],
     endpoint: 'https://generativelanguage.googleapis.com/v1beta',
     privacyTier: 'zero-training',
@@ -42,11 +125,10 @@ export const PROVIDERS: Record<ProviderType, ProviderMeta> = {
   nvidia: {
     id: 'nvidia',
     name: 'NVIDIA NIM',
-    defaultModel: 'meta/llama-3.3-70b-instruct',
+    defaultModel: CANONICAL_DEFAULTS.nvidia,
     availableModels: [
-      { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B (NVIDIA)', description: 'NVIDIA accelerated open frontier model', vision: false },
-      { id: 'mistralai/mixtral-8x7b-instruct-v0.1', name: 'Mixtral 8x7B (NVIDIA)', description: 'Fast mixture of experts', vision: false },
-      { id: 'nvidia/neva-22b', name: 'NeVA 22B Vision', description: 'NVIDIA accelerated visual model', vision: true },
+      { id: 'meta/llama-3.2-90b-vision-instruct', name: 'Llama 3.2 90B Vision', provider: 'nvidia', description: 'High-power accelerated multimodal vision', vision: true, isDefault: true },
+      { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'nvidia', description: 'NVIDIA accelerated open frontier reasoning', vision: false },
     ],
     endpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
     privacyTier: 'standard',
@@ -55,11 +137,10 @@ export const PROVIDERS: Record<ProviderType, ProviderMeta> = {
   groq: {
     id: 'groq',
     name: 'Groq Cloud',
-    defaultModel: 'llama-3.3-70b-versatile',
+    defaultModel: CANONICAL_DEFAULTS.groq,
     availableModels: [
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Groq)', description: '500+ tokens/sec lightning speed', vision: false },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Sub-second instant generation', vision: false },
-      { id: 'llama-3.2-11b-vision-preview', name: 'Llama 3.2 11B Vision', description: 'Fast multimodal vision on Groq LPU', vision: true },
+      { id: 'meta-llama/llama-4-scout-17b-16e-instruct', name: 'Llama 4 Scout 17B', provider: 'groq', description: 'Next-gen MoE frontier architecture on Groq LPU', vision: true, isDefault: true },
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', provider: 'groq', description: '500+ tokens/sec lightning speed', vision: false },
     ],
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     privacyTier: 'standard',
@@ -67,17 +148,30 @@ export const PROVIDERS: Record<ProviderType, ProviderMeta> = {
   },
 };
 
+/** Get provider for a specific model ID */
+export function getProviderForModel(modelId: string): ProviderType {
+  for (const prov of Object.keys(PROVIDERS) as ProviderType[]) {
+    if (PROVIDERS[prov].availableModels.some((m) => m.id === modelId)) {
+      return prov;
+    }
+  }
+  // Fallback heuristics
+  if (modelId.startsWith('gpt-')) return 'openai';
+  if (modelId.startsWith('gemini-')) return 'gemini';
+  if (modelId.includes('groq') || modelId.startsWith('llama-') || modelId.startsWith('meta-llama/')) return 'groq';
+  return 'nvidia';
+}
+
 /**
  * Returns failover provider sequence.
  * If privacyMode is enabled: only returns ['gemini'] (zero training data retention).
- * Otherwise: returns ['openai', 'gemini', 'nvidia', 'groq'] cascade.
+ * Otherwise: returns cascade sequence starting with preferred provider if given.
  */
 export function getProviderCascade(privacyMode: boolean, forcedProvider?: ProviderType | 'auto'): ProviderType[] {
   if (privacyMode) {
     return ['gemini']; // Strictly locked to Gemini paid tier!
   }
   if (forcedProvider && forcedProvider !== 'auto') {
-    // If user explicitly forced a provider, put that first, then fall back to the rest
     const remaining = (['openai', 'gemini', 'nvidia', 'groq'] as ProviderType[]).filter(p => p !== forcedProvider);
     return [forcedProvider, ...remaining];
   }

@@ -60,7 +60,7 @@ Core methodology:
     enablePrintView: true,
     attachmentTips: 'Upload a photo of a textbook chapter, notes, or assignment to convert directly into a practice sheet.',
     systemPrompt: `You are PrintNova, an expert pedagogical curriculum designer and worksheet architect.
-Your task is to generate complete, high-quality, printable educational worksheets.
+Your task is to generate complete, high-quality, printable educational worksheets with complete working and answers.
 Guidelines:
 1. Always format output in a clean, print-ready structure with:
    - Header: [School / Home Study Worksheet]
@@ -70,8 +70,10 @@ Guidelines:
 2. Structure diverse questions:
    - Section A: Multiple Choice Questions (A, B, C, D)
    - Section B: Fill in the Blanks / Word Bank
-   - Section C: Short Answer / Problem Solving / Critical Thinking
-3. Provide an "--- [ANSWER KEY] ---" section at the very end so parents or teachers can quickly grade the work.
+   - Section C: Short Answer / Problem Solving / Critical Thinking (provide blank lined space for students to write working out)
+3. Provide a dedicated "--- [ANSWER KEY & WORKING] ---" section at the very end.
+   - For every question, show the complete step-by-step working, method, or explanation first, followed by the final answer.
+   - This allows parents or teachers to grade the paper or detach the answer sheet before handing to students.
 4. When images of textbook pages or homework problems are attached, adapt the specific contents directly into a tailored practice worksheet.`,
     starterPrompts: [
       { label: 'Grade 4 Math Worksheet', prompt: 'Generate a printable Grade 4 Math worksheet on Adding Fractions with unlike denominators, 10 questions and answer key.' },
@@ -356,18 +358,59 @@ Workflow:
   },
 ];
 
-// Helper to look up agent with backwards compatibility for legacy IDs
+// Helper to look up agent with backwards compatibility for legacy and sibling project IDs
 export function getAgentById(id: string): AgentConfig {
+  const normalized = (id || '').toLowerCase().trim();
   const legacyMap: Record<string, string> = {
+    // Bedtime Story
     kidstory: 'slumberspun',
+    slumberscribe: 'slumberspun',
+    lullaquill: 'slumberspun',
+    slumberstory: 'slumberspun',
+    dreamweaver: 'slumberspun',
+
+    // Study Buddy / Feynman Tutor
     studybuddy: 'feynmanforge',
+    synapsespark: 'feynmanforge',
+    simplesage: 'feynmanforge',
+    learnmate: 'feynmanforge',
+
+    // Worksheet Generator
     worksheet: 'printnova',
+    printmatrix: 'printnova',
+    papermint: 'printnova',
+    quizforge: 'printnova',
+    worksheetwizard: 'printnova',
+
+    // Data / BI Analyst
     dataanalyst: 'metricmancer',
+    formulaviking: 'metricmancer',
+    metricalchemist: 'metricmancer',
+    bytewise: 'metricmancer',
+    datadoctor: 'metricmancer',
+
+    // Medical / Prescription
     doctor: 'rxsleuth',
+    pharmaoracle: 'rxsleuth',
+    pulselens: 'rxsleuth',
+    medpulse: 'rxsleuth',
+    dranalyze: 'rxsleuth',
+
+    // Psychology / Mind
     psycho: 'cognicalm',
+    zensovereign: 'cognicalm',
+    mindmender: 'cognicalm',
+    soulecho: 'cognicalm',
+    psychocare: 'cognicalm',
+
+    // Spiritual / Life
     spiritual: 'zenquasar',
+    aetherguide: 'zenquasar',
+    karmacompass: 'zenquasar',
+    zenith: 'zenquasar',
+    soulsearcher: 'zenquasar',
   };
 
-  const targetId = legacyMap[id] || id;
-  return AGENTS.find((a) => a.id === targetId) || AGENTS[0];
+  const targetId = legacyMap[normalized] || normalized;
+  return AGENTS.find((a) => a.id.toLowerCase() === targetId) || AGENTS[0];
 }

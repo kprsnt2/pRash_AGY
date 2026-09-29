@@ -1,7 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { AgentConfig, Attachment, ChatSession, Message, ProviderType, UserApiKeys } from '@/types/chat';
+import {
+  AgentConfig,
+  Attachment,
+  ChatSession,
+  Message,
+  ProviderType,
+  UserApiKeys,
+} from '@/types/chat';
 import { AGENTS, getAgentById } from '@/lib/agents';
 import {
   saveSession,
@@ -12,6 +19,10 @@ import {
   getUserSettings,
   saveActiveSessionId,
   getActiveSessionId,
+  getStoredTheme,
+  setStoredTheme,
+  exportSingleChat,
+  importChatBundle,
 } from '@/lib/storage';
 import { Sidebar } from '@/components/Sidebar';
 import { ChatArea } from '@/components/ChatArea';
@@ -24,11 +35,17 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentConfig>(AGENTS[0]);
   const [forcedProvider, setForcedProvider] = useState<'auto' | ProviderType>('auto');
+  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
   const [userSettings, setUserSettings] = useState<UserApiKeys>({});
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Theme & Auth state
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [isAuthEnabled, setIsAuthEnabled] = useState<boolean>(false);
+  const [bypassToDefault, setBypassToDefault] = useState<boolean>(false);
 
   // Modals & UI states
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -37,12 +54,38 @@ export default function Home() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Initial load from storage
+  // Initial load from storage and config endpoint
   useEffect(() => {
     async function init() {
+      // Theme setup (add both class names to match Tailwind darkMode: class)
+      const savedTheme = getStoredTheme();
+      setTheme(savedTheme);
+      if (savedTheme === 'light') {
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+      } else {
+        document.documentElement.classList.add('dark');
+        document.documentElement.classList.remove('light');
+      }
+
+      // Check server config & auth
+      try {
+        const confRes = await fetch('/api/config');
+        if (confRes.ok) {
+          const conf = await confRes.json();
+          setIsAuthEnabled(!!conf.authRequired);
+          if (conf.bypassToDefault) {
+            setBypassToDefault(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load server config:', err);
+      }
+
       const settings = getUserSettings();
       setUserSettings(settings);
       if (settings.forcedProvider) setForcedProvider(settings.forcedProvider);
+      if (settings.selectedModel) setSelectedModel(settings.selectedModel);
       if (settings.privacyMode) setPrivacyMode(settings.privacyMode);
 
       const loadedSessions = await getAllSessions();
@@ -62,7 +105,36 @@ export default function Home() {
     init();
   }, []);
 
-  // Save session when messages change (unless temporary / privacy mode)
+  const handleToggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    setStoredTheme(nextTheme);
+    if (nextTheme === 'light') {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+  };
+
+  // Switch agent in the middle of a chat
+  const handleSelectAgent = async (agent: AgentConfig) => {
+    setSelectedAgent(agent);
+    // If we're inside an active conversation, update the session's active agent
+    if (activeSessionId && !privacyMode) {
+      const active = await getSession(activeSessionId);
+      if (active) {
+        const updated = { ...active, agentId: agent.id, updatedAt: Date.now() };
+        await saveSession(updated);
+        setSessions((prev) =>
+          prev.map((s) => (s.id === activeSessionId ? { ...s, agentId: agent.id } : s))
+        );
+      }
+    }
+  };
+
+  // Save session when messages change (unless privacy mode)
   const persistSession = async (updatedMessages: Message[], title?: string) => {
     if (privacyMode) return; // Zero-training privacy mode: not saved to IndexedDB
 
@@ -80,7 +152,8 @@ export default function Home() {
       currentTitle =
         existing?.title ||
         (updatedMessages[0]?.content
-          ? updatedMessages[0].content.slice(0, 36) + (updatedMessages[0].content.length > 36 ? '...' : '')
+          ? updatedMessages[0].content.slice(0, 36) +
+            (updatedMessages[0].content.length > 36 ? '...' : '')
           : 'New Conversation');
     }
 
@@ -149,13 +222,91 @@ export default function Home() {
 
   const handleSelectProvider = (prov: 'auto' | ProviderType) => {
     setForcedProvider(prov);
-    const updatedSettings = { ...userSettings, forcedProvider: prov };
+    setSelectedModel(undefined); // Clear specific model override if user chose provider
+    const updatedSettings = { ...userSettings, forcedProvider: prov, selectedModel: undefined };
     setUserSettings(updatedSettings);
     saveUserSettings(updatedSettings);
   };
 
+  const handleSelectModel = (modelId: string | undefined) => {
+    setSelectedModel(modelId);
+    const updatedSettings = { ...userSettings, selectedModel: modelId };
+    setUserSettings(updatedSettings);
+    saveUserSettings(updatedSettings);
+  };
+
+  // Export current chat
+  const handleExportCurrentChat = async () => {
+    let sessionToExport: ChatSession | null = null;
+    if (activeSessionId) {
+      sessionToExport = (await getSession(activeSessionId)) || null;
+    }
+    if (!sessionToExport && messages.length > 0) {
+      sessionToExport = {
+        id: `session_${Date.now()}`,
+        title: messages[0]?.content.slice(0, 30) || 'Conversation',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        agentId: selectedAgent.id,
+        messages,
+      };
+    }
+    if (!sessionToExport) return;
+
+    const json = exportSingleChat(sessionToExport);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prash-chat-${sessionToExport.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Export a specified session from sidebar
+  const handleExportSession = (session: ChatSession) => {
+    const json = exportSingleChat(session);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prash-chat-${session.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Import chat JSON and resume immediately
+  const handleImportFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const result = await importChatBundle(text);
+      const updatedList = await getAllSessions();
+      setSessions(updatedList);
+
+      if (result.primarySessionId) {
+        await handleSelectSession(result.primarySessionId);
+      }
+    } catch (err: unknown) {
+      alert(`Import error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Lock App
+  const handleLockApp = async () => {
+    try {
+      await fetch('/api/auth', { method: 'DELETE' });
+    } catch {}
+    window.location.href = '/login';
+  };
+
   const handleSendMessage = async (text: string, attachments: Attachment[]) => {
     setError(null);
+    const startTime = Date.now();
+
     const userMessage: Message = {
       id: `msg_${Date.now()}_u`,
       role: 'user',
@@ -195,6 +346,7 @@ export default function Home() {
           attachments,
           privacyMode,
           forcedProvider,
+          selectedModel,
           customKeys: {
             openaiApiKey: userSettings.openaiApiKey,
             openaiModel: userSettings.openaiModel,
@@ -210,12 +362,15 @@ export default function Home() {
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `Server responded with ${response.status}`);
+        throw new Error(errJson.error || `Server responded with status ${response.status}`);
       }
 
-      // Read meta headers
+      // Read metadata headers
       const providerUsed = (response.headers.get('X-Prash-Provider') || 'gemini') as ProviderType;
       const modelUsed = response.headers.get('X-Prash-Model') || '';
+      const latencyHeader = response.headers.get('X-Prash-Latency-Ms');
+      const latencyMs = latencyHeader ? parseInt(latencyHeader, 10) : Date.now() - startTime;
+
       const rawFailover = response.headers.get('X-Prash-Failover-Chain');
       let failoverChain = [];
       if (rawFailover) {
@@ -243,6 +398,7 @@ export default function Home() {
                     providerUsed,
                     modelUsed,
                     failoverChain,
+                    latencyMs,
                   }
                 : msg
             )
@@ -250,7 +406,8 @@ export default function Home() {
         }
       }
 
-      const finalMessages = newMessages.concat({
+      const tokenEstimate = Math.max(1, Math.round(accumulated.length / 3.8));
+      const finalAssistantMessage: Message = {
         id: assistantMessageId,
         role: 'assistant',
         content: accumulated,
@@ -258,20 +415,24 @@ export default function Home() {
         providerUsed,
         modelUsed,
         failoverChain,
+        latencyMs,
+        tokenCount: tokenEstimate,
         timestamp: Date.now(),
-      });
+      };
 
+      const finalMessages = newMessages.concat(finalAssistantMessage);
       setMessages(finalMessages);
       await persistSession(finalMessages);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
-        // User aborted intentionally
         return;
       }
       const errMsg = err instanceof Error ? err.message : 'Unknown communication error';
       setError(errMsg);
       // Remove empty assistant placeholder if failed
-      setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId || m.content.length > 0));
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== assistantMessageId || m.content.length > 0)
+      );
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -299,7 +460,11 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans">
+    <div
+      className={`flex h-screen w-screen overflow-hidden font-sans ${
+        theme === 'light' ? 'light' : 'dark'
+      }`}
+    >
       {/* Sidebar */}
       <Sidebar
         sessions={sessions}
@@ -307,11 +472,17 @@ export default function Home() {
         onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
+        onExportSession={handleExportSession}
+        onImportFile={handleImportFile}
         onOpenSettings={() => setIsSettingsOpen(true)}
         privacyMode={privacyMode}
         onTogglePrivacy={handleTogglePrivacy}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        onLockApp={handleLockApp}
+        isAuthEnabled={isAuthEnabled}
       />
 
       {/* Main Chat Area */}
@@ -319,19 +490,23 @@ export default function Home() {
         messages={messages}
         isLoading={isLoading}
         selectedAgent={selectedAgent}
-        onSelectAgent={setSelectedAgent}
+        onSelectAgent={handleSelectAgent}
         onSendMessage={handleSendMessage}
         onStop={handleStop}
         onRetryLast={handleRetryLast}
         onOpenMobileSidebar={() => setIsSidebarOpen(true)}
         forcedProvider={forcedProvider}
+        selectedModel={selectedModel}
         privacyMode={privacyMode}
         onSelectProvider={handleSelectProvider}
+        onSelectModel={handleSelectModel}
         onTogglePrivacy={handleTogglePrivacy}
         onOpenWorksheetPrint={(content) => setWorksheetPrintContent(content)}
-        customOpenAiModel={userSettings.openaiModel}
-        customGeminiModel={userSettings.geminiModel}
+        onExportCurrentChat={handleExportCurrentChat}
         error={error}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        bypassToDefault={bypassToDefault}
       />
 
       {/* Settings Modal */}
@@ -344,6 +519,8 @@ export default function Home() {
           }}
           onClose={() => setIsSettingsOpen(false)}
           onDataChanged={refreshSessionsList}
+          onImportFile={handleImportFile}
+          theme={theme}
         />
       )}
 

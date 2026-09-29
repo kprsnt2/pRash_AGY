@@ -3,16 +3,47 @@
 @tailwind utilities;
 
 :root {
-  --background: #0f172a;
+  --background: #090d16;
   --foreground: #f8fafc;
-  --border: #334155;
-  --card: #1e293b;
+  --surface: #0f172a;
+  --surface-hover: #1e293b;
+  --border: #1e293b;
+  --card: #0f172a;
   --card-foreground: #f8fafc;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #38bdf8;
-  --accent-foreground: #0f172a;
+  --muted: #64748b;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
   --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+}
+
+.dark {
+  --background: #090d16;
+  --foreground: #f8fafc;
+  --surface: #0f172a;
+  --surface-hover: #1e293b;
+  --border: #1e293b;
+  --card: #0f172a;
+  --card-foreground: #f8fafc;
+  --muted: #64748b;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+}
+
+.light {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-hover: #f1f5f9;
+  --border: #e2e8f0;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --muted: #475569;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
 }
 
@@ -21,6 +52,7 @@ body {
   background: var(--background);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   overflow-x: hidden;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 /* Custom Scrollbars */
@@ -38,122 +70,201 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
-
-/* Print Stylesheet for Worksheets */
-@media print {
-  body {
-    background: #ffffff !important;
-    color: #000000 !important;
-  }
-  .no-print {
-    display: none !important;
-  }
-  .print-only {
-    display: block !important;
-  }
-  .worksheet-printable-area {
-    padding: 0 !important;
-    margin: 0 !important;
-    max-width: 100% !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-    box-shadow: none !important;
-  }
-  .worksheet-printable-area pre,
-  .worksheet-printable-area code {
-    background: #f1f5f9 !important;
-    color: #0f172a !important;
-    border: 1px solid #cbd5e1 !important;
-  }
-  .worksheet-page-break {
-    page-break-before: always;
-  }
+.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
-/* Markdown formatting */
-.prose-dark {
-  color: #e2e8f0;
+/* High-contrast Markdown Typography */
+.prose-content {
+  line-height: 1.7;
 }
-.prose-dark h1 {
-  color: #f8fafc;
-  font-size: 1.6rem;
+.prose-content h1 {
+  font-size: 1.5rem;
   font-weight: 700;
   margin-top: 1.25rem;
   margin-bottom: 0.75rem;
+  color: inherit;
 }
-.prose-dark h2 {
-  color: #f1f5f9;
-  font-size: 1.35rem;
+.prose-content h2 {
+  font-size: 1.3rem;
   font-weight: 600;
   margin-top: 1rem;
   margin-bottom: 0.5rem;
+  color: inherit;
 }
-.prose-dark h3 {
-  color: #e2e8f0;
+.prose-content h3 {
   font-size: 1.15rem;
   font-weight: 600;
   margin-top: 0.75rem;
   margin-bottom: 0.4rem;
+  color: inherit;
 }
-.prose-dark p {
+.prose-content p {
   margin-top: 0.5rem;
   margin-bottom: 0.5rem;
-  line-height: 1.7;
 }
-.prose-dark ul {
+.prose-content ul {
   list-style-type: disc;
   margin-left: 1.5rem;
-  margin-top: 0.4rem;
-  margin-bottom: 0.4rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
-.prose-dark ol {
+.prose-content ol {
   list-style-type: decimal;
   margin-left: 1.5rem;
-  margin-top: 0.4rem;
-  margin-bottom: 0.4rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
-.prose-dark li {
+.prose-content li {
   margin-top: 0.25rem;
   margin-bottom: 0.25rem;
 }
-.prose-dark pre {
-  background: #090d16;
-  border: 1px solid #1e293b;
-  border-radius: 0.5rem;
-  padding: 1rem;
-  overflow-x: auto;
+.prose-content blockquote {
+  border-left: 3px solid #3b82f6;
+  padding-left: 1rem;
+  font-style: italic;
   margin: 0.75rem 0;
+  opacity: 0.9;
 }
-.prose-dark code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.9em;
-}
-.prose-dark :not(pre) > code {
-  background: #1e293b;
-  color: #38bdf8;
-  padding: 0.15rem 0.35rem;
-  border-radius: 0.25rem;
-}
-.prose-dark table {
+.prose-content table {
   width: 100%;
   border-collapse: collapse;
   margin: 1rem 0;
+  font-size: 0.875rem;
 }
-.prose-dark th {
-  background: #1e293b;
+.prose-content th,
+.prose-content td {
   border: 1px solid #334155;
   padding: 0.5rem 0.75rem;
-  font-weight: 600;
   text-align: left;
 }
-.prose-dark td {
-  border: 1px solid #334155;
-  padding: 0.5rem 0.75rem;
+.light .prose-content th,
+.light .prose-content td {
+  border: 1px solid #cbd5e1;
 }
-.prose-dark blockquote {
-  border-left: 4px solid #38bdf8;
-  padding-left: 1rem;
-  color: #94a3b8;
-  font-style: italic;
-  margin: 0.75rem 0;
+.prose-content th {
+  background: rgba(15, 23, 42, 0.5);
+  font-weight: 600;
+}
+.light .prose-content th {
+  background: #f1f5f9;
+}
+
+/* Strict & Clean Print Stylesheet for Worksheets & Chat Transcript */
+@media print {
+  /* Ensure parent containers allow multi-page expansion without clipping */
+  html, body, #__next, main, .h-screen, .w-screen, .overflow-hidden, .overflow-y-auto {
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide app chrome: sidebar, headers, footers, composers, action buttons */
+  aside,
+  header,
+  footer,
+  .no-print,
+  .chat-composer-container,
+  button:not(.print-keep),
+  input,
+  textarea {
+    display: none !important;
+  }
+
+  /* When Worksheet Modal is active */
+  body:has(.worksheet-printable-area) .chat-area-container,
+  body:has(.worksheet-printable-area) .chat-messages-container,
+  body:has(.worksheet-printable-area) .chat-header-bar {
+    display: none !important;
+  }
+
+  .worksheet-modal-backdrop {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    inset: auto !important;
+    z-index: auto !important;
+  }
+
+  .worksheet-modal-container {
+    border: none !important;
+    box-shadow: none !important;
+    max-height: none !important;
+    max-width: 100% !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+  }
+
+  .worksheet-printable-area {
+    position: static !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+  }
+
+  .worksheet-printable-area * {
+    color: #000000 !important;
+    background: transparent !important;
+  }
+
+  .student-worksheet-header {
+    border-bottom: 2px solid #000000 !important;
+    margin-bottom: 1.5rem !important;
+  }
+
+  .worksheet-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+    margin-top: 2rem !important;
+  }
+
+  /* When printing Chat Conversation transcript */
+  .chat-messages-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 10mm 15mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+  }
+
+  .message-item {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    border-bottom: 1px solid #e2e8f0 !important;
+    padding: 12px 0 !important;
+    background: transparent !important;
+    color: #000000 !important;
+  }
+
+  .message-item * {
+    color: #000000 !important;
+  }
+
+  .message-item code {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  .message-item pre {
+    background: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    overflow-x: visible !important;
+    white-space: pre-wrap !important;
+  }
 }
